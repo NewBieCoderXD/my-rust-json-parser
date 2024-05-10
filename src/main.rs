@@ -33,6 +33,18 @@ fn parser(json_string: &str) -> Result<JsonObject, String> {
   return result;
 }
 
+struct StateHandlingResult{
+  is_recursive: bool
+}
+
+impl StateHandlingResult{
+  fn new(is_recursive: bool) -> StateHandlingResult{
+    return StateHandlingResult{
+      is_recursive: is_recursive
+    }
+  }
+}
+
 fn state_handler(
   state: &mut State,
   current_char: char,
@@ -41,12 +53,12 @@ fn state_handler(
   current_value: &mut Option<Json>,
   json: &mut JsonObject,
   char_itr: &mut Peekable<Chars>,
-) -> Result<(), String> {
+) -> Result<StateHandlingResult, String> {
   match state {
     State::Start => {
       if current_char == '{' {
         *state = State::Key;
-        return Ok(());
+        return Ok(StateHandlingResult::new(false));
       }
       return Err(format!("Unexpected char, {}", current_char));
     }
@@ -54,22 +66,22 @@ fn state_handler(
       if *is_in_quotes {
         if current_char == '"' {
           *is_in_quotes = false;
-          return Ok(());
+          return Ok(StateHandlingResult::new(false));
         }
         current_key.push(current_char);
-        return Ok(());
+        return Ok(StateHandlingResult::new(false));
       }
       if current_char == '}' {
         *state = State::End;
-        return Ok(());
+        return Ok(StateHandlingResult::new(false));
       }
       if current_char == ':' {
         *state = State::Value;
-        return Ok(());
+        return Ok(StateHandlingResult::new(false));
       }
       if current_char == '"' {
         *is_in_quotes = true;
-        return Ok(());
+        return Ok(StateHandlingResult::new(false));
       }
       return Err(format!("Unexpected char, {}", current_char));
     }
@@ -82,12 +94,12 @@ fn state_handler(
           *current_value = None;
           *current_key = String::new();
           *state = State::NextOrEnd;
-          return Ok(());
+          return Ok(StateHandlingResult::new(false));
         }
 
         if let Some(Json::String(ref mut current_value_string)) = current_value {
           current_value_string.push(current_char);
-          return Ok(());
+          return Ok(StateHandlingResult::new(false));
         }
         return Err("".to_string());
       }
@@ -100,23 +112,23 @@ fn state_handler(
         *current_value = Some(Json::Object(Box::new(result.unwrap())));
         json.map.insert(current_key.clone(), current_value.as_ref().unwrap().clone());
         *state = State::NextOrEnd;
-        return Ok(());
+        return Ok(StateHandlingResult::new(true));
       }
       if current_char == '"' {
         *is_in_quotes = true;
         *current_value = Some(Json::String(Box::new(String::new())));
-        return Ok(());
+        return Ok(StateHandlingResult::new(false));
       }
       if current_char == ',' {
         *state = State::NextOrEnd;
-        return Ok(());
+        return Ok(StateHandlingResult::new(false));
       }
     }
     State::NextOrEnd => {
       if current_char == '"' {
         *is_in_quotes = true;
         *state = State::Key;
-        return Ok(());
+        return Ok(StateHandlingResult::new(false));
       }
       if current_char == '}' {
         *state = State::End;
@@ -124,10 +136,10 @@ fn state_handler(
     }
     State::End => {
       // return Err(format!("Unexpected char, {}", current_char));
-      return Ok(());
+        return Ok(StateHandlingResult::new(false));
     }
   }
-  return Ok(());
+  return Ok(StateHandlingResult::new(false));
 }
 
 fn parser_recur(char_itr: &mut Peekable<Chars>) -> Result<JsonObject, String> {
@@ -149,9 +161,14 @@ fn parser_recur(char_itr: &mut Peekable<Chars>) -> Result<JsonObject, String> {
     }
     println!("state: {:?} cur char: {}", state, current_char);
     let result = state_handler(&mut state, current_char, &mut is_in_quotes, &mut current_key, &mut current_value, &mut json, char_itr);
-    char_itr.next();
-    if let Some(err) = result.err(){
-      return Err(err);
+    
+    match result{
+      Ok(state_handling_result) => {
+        if !state_handling_result.is_recursive{
+          char_itr.next();
+        }
+      },
+      Err(err) => return Err(err)
     }
     if matches!(state,State::End){
       return Ok(json);
